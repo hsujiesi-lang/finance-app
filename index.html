@@ -88,6 +88,7 @@
   .progress .fill.over { background: var(--red); }
   .budget-stats { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
   .budget-stats b { color: var(--text); font-weight: 700; }
+  .budget-stats.total-row { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 
   /* ---------- Category summary ---------- */
   .section-title {
@@ -160,6 +161,16 @@
   }
   .cat-pick .em { font-size: 20px; }
   .cat-pick.sel { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .pay-seg { display: flex; gap: 8px; }
+  .pay-opt {
+    flex: 1; padding: 11px 0; border-radius: 12px; border: 1.5px solid var(--border);
+    background: var(--bg); cursor: pointer; font-size: 14px; font-weight: 600; color: var(--text);
+  }
+  .pay-opt.sel { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .cash-tag {
+    font-size: 10px; font-weight: 700; color: var(--amber);
+    border: 1px solid var(--amber); border-radius: 5px; padding: 1px 5px; margin-left: 6px;
+  }
   .text-input, .date-input {
     width: 100%; font-size: 15px; border: none; outline: none;
     background: var(--bg); border-radius: 12px; padding: 12px 14px; color: var(--text);
@@ -204,8 +215,12 @@
     <div class="sub-line" id="budgetLine"></div>
     <div class="progress"><div class="fill" id="progressFill" style="width:0%"></div></div>
     <div class="budget-stats">
-      <span>Spent <b id="spentTotal">$0</b></span>
+      <span>💳 Card spent <b id="spentTotal">$0</b></span>
       <span id="dailyHint"></span>
+    </div>
+    <div class="budget-stats total-row">
+      <span>💵 Cash spent <b id="cashTotal">$0</b></span>
+      <span>Total this month <b id="grandTotal">$0</b></span>
     </div>
   </div>
 
@@ -238,6 +253,11 @@
     <h2>Add Expense</h2>
     <div class="field-label">Amount ($)</div>
     <input class="amount-input" id="inAmount" type="number" inputmode="decimal" placeholder="0" step="0.01" min="0">
+    <div class="field-label">Paid With</div>
+    <div class="pay-seg" id="paySeg">
+      <button type="button" class="pay-opt sel" data-m="card">💳 Card</button>
+      <button type="button" class="pay-opt" data-m="cash">💵 Cash</button>
+    </div>
     <div class="field-label">Category</div>
     <div class="cat-grid" id="catGrid"></div>
     <div class="field-label">Date</div>
@@ -285,6 +305,8 @@ const store = {
 let data = store.load();
 let view = new Date();          // month being viewed
 let selectedCat = null;
+let selectedMethod = "card";
+const isCash = t => t.method === "cash";
 
 const $ = id => document.getElementById(id);
 const fmt = n => { const v = Math.round(n * 100) / 100; return "$" + v.toLocaleString("en-US", { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 }); };
@@ -298,19 +320,23 @@ function render() {
   $("monthLabel").textContent = view.toLocaleString("en-US", { month: "short", year: "numeric" });
 
   const txs = data.txs.filter(t => t.date.startsWith(key)).sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
-  const spent = txs.reduce((s, t) => s + t.amount, 0);
-  const remaining = data.budget - spent;
+  const cardSpent = txs.filter(t => !isCash(t)).reduce((s, t) => s + t.amount, 0);
+  const cashSpent = txs.filter(isCash).reduce((s, t) => s + t.amount, 0);
+  const spent = cardSpent + cashSpent;
+  const remaining = data.budget - cardSpent;   // budget tracks the debit card only
 
   // Budget card
   const rEl = $("remaining");
   rEl.textContent = fmt(remaining);
   rEl.classList.toggle("over", remaining < 0);
-  $("budgetLine").textContent = "Monthly budget " + fmt(data.budget);
-  $("spentTotal").textContent = fmt(spent);
-  const pct = data.budget > 0 ? Math.min(spent / data.budget * 100, 100) : 0;
+  $("budgetLine").textContent = "Card budget " + fmt(data.budget) + " · cash not counted";
+  $("spentTotal").textContent = fmt(cardSpent);
+  $("cashTotal").textContent = fmt(cashSpent);
+  $("grandTotal").textContent = fmt(spent);
+  const pct = data.budget > 0 ? Math.min(cardSpent / data.budget * 100, 100) : 0;
   const fill = $("progressFill");
   fill.style.width = pct + "%";
-  fill.className = "fill" + (spent > data.budget ? " over" : pct > 80 ? " warn" : "");
+  fill.className = "fill" + (cardSpent > data.budget ? " over" : pct > 80 ? " warn" : "");
 
   if (isCurrent && remaining > 0) {
     const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
@@ -353,7 +379,7 @@ function render() {
       const d = new Date(t.date + "T00:00");
       return '<div class="tx-row">' +
         '<div class="cat-icon">' + c.em + '</div>' +
-        '<div class="tx-info"><div class="tx-cat">' + c.name + '</div>' +
+        '<div class="tx-info"><div class="tx-cat">' + c.name + (isCash(t) ? '<span class="cash-tag">CASH</span>' : '') + '</div>' +
         (t.note ? '<div class="tx-note">' + escapeHtml(t.note) + '</div>' : '') + '</div>' +
         '<div class="tx-right"><div class="tx-amount">−' + fmt(t.amount) + '</div>' +
         '<div class="tx-date">' + d.toLocaleString("en-US", { month: "short", day: "numeric" }) + '</div></div>' +
@@ -366,6 +392,8 @@ function escapeHtml(s) { return s.replace(/[&<>"']/g, m => ({ "&": "&amp;", "<":
 // ---------- Add-expense sheet ----------
 function openSheet() {
   selectedCat = null;
+  selectedMethod = "card";
+  document.querySelectorAll(".pay-opt").forEach(p => p.classList.toggle("sel", p.dataset.m === "card"));
   $("inAmount").value = "";
   $("inNote").value = "";
   const today = new Date();
@@ -382,6 +410,13 @@ $("addBtn").onclick = openSheet;
 $("cancelBtn").onclick = closeSheet;
 $("overlay").onclick = e => { if (e.target === $("overlay")) closeSheet(); };
 
+$("paySeg").onclick = e => {
+  const el = e.target.closest(".pay-opt");
+  if (!el) return;
+  selectedMethod = el.dataset.m;
+  document.querySelectorAll(".pay-opt").forEach(p => p.classList.toggle("sel", p === el));
+};
+
 $("catGrid").onclick = e => {
   const el = e.target.closest(".cat-pick");
   if (!el) return;
@@ -397,6 +432,7 @@ $("saveBtn").onclick = () => {
     id: Date.now(),
     amount: Math.round(amount * 100) / 100,
     cat: selectedCat,
+    method: selectedMethod,
     date: $("inDate").value || new Date().toISOString().slice(0, 10),
     note: $("inNote").value.trim()
   });
@@ -427,10 +463,10 @@ function download(filename, text, type) {
 const stamp = () => new Date().toISOString().slice(0, 10);
 
 $("exportCsv").onclick = () => {
-  const rows = [["Date", "Category", "Group", "Amount", "Note"]];
+  const rows = [["Date", "Category", "Group", "Amount", "Payment", "Note"]];
   const groupOf = id => (GROUPS.find(g => g.cats.some(c => c.id === id)) || {}).name || "";
   [...data.txs].sort((a, b) => a.date.localeCompare(b.date)).forEach(t => {
-    rows.push([t.date, catById(t.cat).name, groupOf(t.cat), t.amount, t.note || ""]);
+    rows.push([t.date, catById(t.cat).name, groupOf(t.cat), t.amount, isCash(t) ? "Cash" : "Card", t.note || ""]);
   });
   const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(",")).join("\n");
   download("finance-" + stamp() + ".csv", "\uFEFF" + csv, "text/csv;charset=utf-8");
