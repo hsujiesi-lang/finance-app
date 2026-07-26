@@ -181,6 +181,19 @@
   }
   .cat-pick .em { font-size: 20px; }
   .cat-pick.sel { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .cat-pick { position: relative; }
+  .cat-pick .del-badge {
+    position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%;
+    background: var(--red); color: #fff; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .cat-pick.add-tile { border-style: dashed; color: var(--muted); }
+  .cat-label-row { display: flex; justify-content: space-between; align-items: center; }
+  .edit-cats { font-size: 12px; color: var(--accent); cursor: pointer; background: none; border: none; font-weight: 700; text-transform: none; letter-spacing: 0; }
+  .new-cat-form { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .ncf-row { display: flex; gap: 8px; }
+  .ncf-row .nc-emoji { width: 64px; flex: 0 0 64px; text-align: center; }
+  .new-cat-form .btn { padding: 12px 0; }
   .pay-seg { display: flex; gap: 8px; }
   .pay-opt {
     flex: 1; padding: 11px 0; border-radius: 12px; border: 1.5px solid var(--border);
@@ -278,8 +291,19 @@
       <button type="button" class="pay-opt sel" data-m="card">💳 Card</button>
       <button type="button" class="pay-opt" data-m="cash">💵 Cash</button>
     </div>
-    <div class="field-label">Category</div>
+    <div class="field-label cat-label-row">Category <button type="button" class="edit-cats" id="editCatsBtn">Edit</button></div>
     <div class="cat-grid" id="catGrid"></div>
+    <div class="new-cat-form" id="newCatForm" hidden>
+      <div class="ncf-row">
+        <input class="text-input nc-emoji" id="ncEmoji" type="text" placeholder="🏷️" maxlength="4">
+        <input class="text-input" id="ncName" type="text" placeholder="Category name" maxlength="20" style="flex:1">
+      </div>
+      <select class="text-input" id="ncGroup"></select>
+      <div class="ncf-row">
+        <button type="button" class="btn ghost" id="ncCancel">Cancel</button>
+        <button type="button" class="btn primary" id="ncAdd">Add Category</button>
+      </div>
+    </div>
     <div class="field-label">Date</div>
     <input class="date-input" id="inDate" type="date">
     <div class="field-label">Note (optional)</div>
@@ -314,19 +338,40 @@ const GROUPS = [
     { id: "transport", name: "Transport",      em: "🚇" },
   ]},
 ];
-const CATS = GROUPS.flatMap(g => g.cats);
-const catById = id => CATS.find(c => c.id === id) || { name: id, em: "💸" };
-
 // ---------- State ----------
 const store = {
-  load() { try { return JSON.parse(localStorage.getItem("finance-data")) || { budget: 2000, txs: [] }; } catch { return { budget: 2000, txs: [] }; } },
+  load() {
+    let d = {};
+    try { d = JSON.parse(localStorage.getItem("finance-data")) || {}; } catch { d = {}; }
+    return {
+      budget: typeof d.budget === "number" ? d.budget : 2000,
+      txs: Array.isArray(d.txs) ? d.txs : [],
+      customCats: Array.isArray(d.customCats) ? d.customCats : [],
+      hiddenCats: Array.isArray(d.hiddenCats) ? d.hiddenCats : []
+    };
+  },
   save(d) { localStorage.setItem("finance-data", JSON.stringify(d)); }
 };
 let data = store.load();
 let view = new Date();          // month being viewed
 let selectedCat = null;
 let selectedMethod = "card";
+let editingCats = false;
 const isCash = t => t.method === "cash";
+
+// ---------- Category helpers (defaults minus hidden, plus custom) ----------
+const allCats = () => [...GROUPS.flatMap(g => g.cats), ...data.customCats];
+const visibleCats = () => [
+  ...GROUPS.flatMap(g => g.cats).filter(c => !data.hiddenCats.includes(c.id)),
+  ...data.customCats
+];
+const catById = id => allCats().find(c => c.id === id) || { id, name: id, em: "💸" };
+const groupNameOf = id => {
+  const g = GROUPS.find(g => g.cats.some(c => c.id === id));
+  if (g) return g.name;
+  const c = data.customCats.find(c => c.id === id);
+  return c && c.group ? c.group : "Other";
+};
 
 const $ = id => document.getElementById(id);
 const fmt = n => { const v = Math.round(n * 100) / 100; return "$" + v.toLocaleString("en-US", { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 }); };
@@ -370,8 +415,28 @@ function render() {
   const byCat = {};
   txs.forEach(t => byCat[t.cat] = (byCat[t.cat] || 0) + t.amount);
   const maxCat = Math.max(1, ...Object.values(byCat));
+
+  // Display groups: defaults (hidden ones only if they still have spending),
+  // custom categories under their chosen group, unknown ids under "Other".
+  const displayGroups = GROUPS.map(g => ({
+    name: g.name,
+    cats: g.cats.filter(c => !data.hiddenCats.includes(c.id) || byCat[c.id])
+  }));
+  data.customCats.forEach(c => {
+    let g = displayGroups.find(x => x.name === (c.group || "Other"));
+    if (!g) { g = { name: c.group || "Other", cats: [] }; displayGroups.push(g); }
+    g.cats.push(c);
+  });
+  const knownIds = new Set(displayGroups.flatMap(g => g.cats.map(c => c.id)));
+  const leftover = Object.keys(byCat).filter(id => !knownIds.has(id));
+  if (leftover.length) {
+    let other = displayGroups.find(g => g.name === "Other");
+    if (!other) { other = { name: "Other", cats: [] }; displayGroups.push(other); }
+    other.cats.push(...leftover.map(catById));
+  }
+
   let html = "";
-  GROUPS.forEach(g => {
+  displayGroups.forEach(g => {
     const gTotal = g.cats.reduce((s, c) => s + (byCat[c.id] || 0), 0);
     if (gTotal === 0) return;
     html += '<div class="card" style="padding:14px 14px 8px">';
@@ -382,7 +447,7 @@ function render() {
       const share = spent > 0 ? Math.round(amt / spent * 100) : 0;
       html += '<div class="cat-row">' +
         '<div class="cat-icon">' + c.em + '</div>' +
-        '<div class="cat-info"><div class="cat-name">' + c.name + '</div>' +
+        '<div class="cat-info"><div class="cat-name">' + escapeHtml(c.name) + '</div>' +
         '<div class="cat-bar"><div class="fill" style="width:' + (amt / maxCat * 100) + '%"></div></div></div>' +
         '<div class="cat-amount">' + fmt(amt) + '<small>' + share + '%</small></div></div>';
     });
@@ -399,7 +464,7 @@ function render() {
       const d = new Date(t.date + "T00:00");
       return '<div class="tx-row">' +
         '<div class="cat-icon">' + c.em + '</div>' +
-        '<div class="tx-info"><div class="tx-cat">' + c.name + (isCash(t) ? '<span class="cash-tag">CASH</span>' : '') + '</div>' +
+        '<div class="tx-info"><div class="tx-cat">' + escapeHtml(c.name) + (isCash(t) ? '<span class="cash-tag">CASH</span>' : '') + '</div>' +
         (t.note ? '<div class="tx-note">' + escapeHtml(t.note) + '</div>' : '') + '</div>' +
         '<div class="tx-right"><div class="tx-amount">−' + fmt(t.amount) + '</div>' +
         '<div class="tx-date">' + d.toLocaleString("en-US", { month: "short", day: "numeric" }) + '</div></div>' +
@@ -410,17 +475,34 @@ function render() {
 function escapeHtml(s) { return s.replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
 
 // ---------- Add-expense sheet ----------
+function buildCatGrid() {
+  const tiles = visibleCats().map(c =>
+    '<div class="cat-pick' + (editingCats ? ' editing' : '') + (selectedCat === c.id ? ' sel' : '') + '" data-id="' + c.id + '">' +
+    '<span class="em">' + c.em + '</span>' + escapeHtml(c.name) +
+    (editingCats ? '<span class="del-badge">✕</span>' : '') + '</div>'
+  );
+  tiles.push('<div class="cat-pick add-tile" data-id="__add"><span class="em">＋</span>New</div>');
+  $("catGrid").innerHTML = tiles.join("");
+}
+
+function hideNewCatForm() {
+  $("newCatForm").hidden = true;
+  $("ncName").value = "";
+  $("ncEmoji").value = "";
+}
+
 function openSheet() {
   selectedCat = null;
   selectedMethod = "card";
+  editingCats = false;
+  $("editCatsBtn").textContent = "Edit";
+  hideNewCatForm();
   document.querySelectorAll(".pay-opt").forEach(p => p.classList.toggle("sel", p.dataset.m === "card"));
   $("inAmount").value = "";
   $("inNote").value = "";
   const today = new Date();
   $("inDate").value = today.toISOString().slice(0, 10);
-  $("catGrid").innerHTML = CATS.map(c =>
-    '<div class="cat-pick" data-id="' + c.id + '"><span class="em">' + c.em + '</span>' + c.name + '</div>'
-  ).join("");
+  buildCatGrid();
   $("overlay").classList.add("show");
   setTimeout(() => $("inAmount").focus(), 100);
 }
@@ -440,8 +522,50 @@ $("paySeg").onclick = e => {
 $("catGrid").onclick = e => {
   const el = e.target.closest(".cat-pick");
   if (!el) return;
-  selectedCat = el.dataset.id;
-  document.querySelectorAll(".cat-pick").forEach(p => p.classList.toggle("sel", p === el));
+  const id = el.dataset.id;
+  if (id === "__add") {
+    $("newCatForm").hidden = false;
+    const groupNames = [...new Set([...GROUPS.map(g => g.name), ...data.customCats.map(c => c.group || "Other"), "Other"])];
+    $("ncGroup").innerHTML = groupNames.map(n => '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>').join("");
+    $("ncName").focus();
+    return;
+  }
+  if (editingCats) {
+    const c = catById(id);
+    if (!confirm('Remove category "' + c.name + '"?\nPast records that use it are kept.')) return;
+    if (data.customCats.some(x => x.id === id)) {
+      data.customCats = data.customCats.filter(x => x.id !== id);
+    } else if (!data.hiddenCats.includes(id)) {
+      data.hiddenCats.push(id);
+    }
+    if (selectedCat === id) selectedCat = null;
+    store.save(data);
+    buildCatGrid();
+    render();
+    return;
+  }
+  selectedCat = id;
+  buildCatGrid();
+};
+
+$("editCatsBtn").onclick = () => {
+  editingCats = !editingCats;
+  $("editCatsBtn").textContent = editingCats ? "Done" : "Edit";
+  buildCatGrid();
+};
+
+$("ncCancel").onclick = hideNewCatForm;
+$("ncAdd").onclick = () => {
+  const name = $("ncName").value.trim();
+  if (!name) { $("ncName").focus(); return; }
+  if (visibleCats().some(c => c.name.toLowerCase() === name.toLowerCase())) { alert("That category already exists."); return; }
+  const em = $("ncEmoji").value.trim() || "🏷️";
+  const cat = { id: "c" + Date.now(), name, em, group: $("ncGroup").value };
+  data.customCats.push(cat);
+  store.save(data);
+  hideNewCatForm();
+  selectedCat = cat.id;
+  buildCatGrid();
 };
 
 $("saveBtn").onclick = () => {
@@ -484,9 +608,8 @@ const stamp = () => new Date().toISOString().slice(0, 10);
 
 $("exportCsv").onclick = () => {
   const rows = [["Date", "Category", "Group", "Amount", "Payment", "Note"]];
-  const groupOf = id => (GROUPS.find(g => g.cats.some(c => c.id === id)) || {}).name || "";
   [...data.txs].sort((a, b) => a.date.localeCompare(b.date)).forEach(t => {
-    rows.push([t.date, catById(t.cat).name, groupOf(t.cat), t.amount, isCash(t) ? "Cash" : "Card", t.note || ""]);
+    rows.push([t.date, catById(t.cat).name, groupNameOf(t.cat), t.amount, isCash(t) ? "Cash" : "Card", t.note || ""]);
   });
   const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(",")).join("\n");
   download("finance-" + stamp() + ".csv", "\uFEFF" + csv, "text/csv;charset=utf-8");
@@ -507,7 +630,12 @@ $("importFile").onchange = e => {
       const d = JSON.parse(reader.result);
       if (typeof d.budget !== "number" || !Array.isArray(d.txs)) throw new Error("bad format");
       if (!confirm("Restore from backup? This replaces the " + data.txs.length + " record(s) currently on this device.")) return;
-      data = { budget: d.budget, txs: d.txs.filter(t => t && typeof t.amount === "number" && t.date && t.cat) };
+      data = {
+        budget: d.budget,
+        txs: d.txs.filter(t => t && typeof t.amount === "number" && t.date && t.cat),
+        customCats: Array.isArray(d.customCats) ? d.customCats : [],
+        hiddenCats: Array.isArray(d.hiddenCats) ? d.hiddenCats : []
+      };
       store.save(data);
       render();
       alert("Restored " + data.txs.length + " record(s) ✓");
