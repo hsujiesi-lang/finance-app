@@ -22,6 +22,10 @@
     --red: #e05252;
     --amber: #e8a23d;
     --border: #e5e9f2;
+    --cat-color: #b07a18;      /* Spending by Category: gold */
+    --cat-soft: #f7efdc;
+    --tx-color: #1f7f96;       /* Transactions: teal */
+    --tx-soft: #e2f1f5;
     --radius: 16px;
     --shadow: 0 1px 3px rgba(20,30,60,.06), 0 4px 14px rgba(20,30,60,.05);
   }
@@ -33,6 +37,10 @@
       --muted: #8a93a8;
       --accent: #d4626f;
       --accent-soft: #3a1f26;
+      --cat-color: #e0b352;
+      --cat-soft: #322a18;
+      --tx-color: #56b9cf;
+      --tx-soft: #16303a;
       --border: #2a3348;
       --shadow: 0 1px 3px rgba(0,0,0,.3);
     }
@@ -110,6 +118,18 @@
   .cat-name { font-size: 14px; font-weight: 600; }
   .cat-bar { height: 5px; background: var(--accent-soft); border-radius: 3px; margin-top: 5px; overflow: hidden; }
   .cat-bar .fill { height: 100%; border-radius: 3px; background: var(--accent); }
+
+  /* Section color identities: gold for category summary, teal for transactions */
+  .section-title.cat-title { color: var(--cat-color); }
+  .section-title.tx-title { color: var(--tx-color); }
+  #catSummary .card { border-left: 3px solid var(--cat-color); }
+  #catSummary .g-name, #catSummary .g-total { color: var(--cat-color); }
+  #catSummary .cat-icon { background: var(--cat-soft); }
+  #catSummary .cat-bar { background: var(--cat-soft); }
+  #catSummary .cat-bar .fill { background: var(--cat-color); }
+  .tx-card { border-left: 3px solid var(--tx-color); }
+  .tx-card .cat-icon { background: var(--tx-soft); }
+  .tx-card .tx-amount { color: var(--tx-color); }
   .cat-amount { font-size: 14px; font-weight: 700; white-space: nowrap; }
   .cat-amount small { display: block; font-size: 11px; color: var(--muted); font-weight: 500; text-align: right; }
 
@@ -225,12 +245,12 @@
   </div>
 
   <!-- Category breakdown -->
-  <div class="section-title">Spending by Category</div>
+  <div class="section-title cat-title">Spending by Category</div>
   <div id="catSummary"></div>
 
   <!-- Transaction list -->
-  <div class="section-title">Transactions</div>
-  <div class="card" id="txList"></div>
+  <div class="section-title tx-title">Transactions</div>
+  <div class="card tx-card" id="txList"></div>
 
   <!-- Backup -->
   <div class="section-title">Backup</div>
