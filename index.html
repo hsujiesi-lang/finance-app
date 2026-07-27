@@ -134,7 +134,7 @@
   .cat-amount small { display: block; font-size: 11px; color: var(--muted); font-weight: 500; text-align: right; }
 
   /* ---------- Transactions ---------- */
-  .tx-row { display: flex; align-items: center; gap: 12px; padding: 10px 4px; }
+  .tx-row { display: flex; align-items: center; gap: 12px; padding: 10px 4px; cursor: pointer; }
   .tx-row + .tx-row { border-top: 1px solid var(--border); }
   .tx-info { flex: 1; min-width: 0; }
   .tx-cat { font-size: 14px; font-weight: 600; }
@@ -283,7 +283,7 @@
 <!-- Add expense sheet -->
 <div class="overlay" id="overlay">
   <div class="sheet">
-    <h2>Add Expense</h2>
+    <h2 id="sheetTitle">Add Expense</h2>
     <div class="field-label">Amount ($)</div>
     <input class="amount-input" id="inAmount" type="number" inputmode="decimal" placeholder="0" step="0.01" min="0">
     <div class="field-label">Paid With</div>
@@ -357,6 +357,7 @@ let view = new Date();          // month being viewed
 let selectedCat = null;
 let selectedMethod = "card";
 let editingCats = false;
+let editingTxId = null;
 const isCash = t => t.method === "cash";
 
 // ---------- Category helpers (defaults minus hidden, plus custom) ----------
@@ -462,7 +463,7 @@ function render() {
     $("txList").innerHTML = txs.map(t => {
       const c = catById(t.cat);
       const d = new Date(t.date + "T00:00");
-      return '<div class="tx-row">' +
+      return '<div class="tx-row" data-id="' + t.id + '">' +
         '<div class="cat-icon">' + c.em + '</div>' +
         '<div class="tx-info"><div class="tx-cat">' + escapeHtml(c.name) + (isCash(t) ? '<span class="cash-tag">CASH</span>' : '') + '</div>' +
         (t.note ? '<div class="tx-note">' + escapeHtml(t.note) + '</div>' : '') + '</div>' +
@@ -476,7 +477,10 @@ function escapeHtml(s) { return s.replace(/[&<>"']/g, m => ({ "&": "&amp;", "<":
 
 // ---------- Add-expense sheet ----------
 function buildCatGrid() {
-  const tiles = visibleCats().map(c =>
+  const cats = visibleCats();
+  // when editing an old record whose category was removed, keep it pickable
+  if (selectedCat && !cats.some(c => c.id === selectedCat)) cats.push(catById(selectedCat));
+  const tiles = cats.map(c =>
     '<div class="cat-pick' + (editingCats ? ' editing' : '') + (selectedCat === c.id ? ' sel' : '') + '" data-id="' + c.id + '">' +
     '<span class="em">' + c.em + '</span>' + escapeHtml(c.name) +
     (editingCats ? '<span class="del-badge">✕</span>' : '') + '</div>'
@@ -491,24 +495,25 @@ function hideNewCatForm() {
   $("ncEmoji").value = "";
 }
 
-function openSheet() {
-  selectedCat = null;
-  selectedMethod = "card";
+function openSheet(tx) {
+  editingTxId = tx ? tx.id : null;
+  $("sheetTitle").textContent = tx ? "Edit Expense" : "Add Expense";
+  selectedCat = tx ? tx.cat : null;
+  selectedMethod = tx && isCash(tx) ? "cash" : "card";
   editingCats = false;
   $("editCatsBtn").textContent = "Edit";
   hideNewCatForm();
-  document.querySelectorAll(".pay-opt").forEach(p => p.classList.toggle("sel", p.dataset.m === "card"));
-  $("inAmount").value = "";
-  $("inNote").value = "";
-  const today = new Date();
-  $("inDate").value = today.toISOString().slice(0, 10);
+  document.querySelectorAll(".pay-opt").forEach(p => p.classList.toggle("sel", p.dataset.m === selectedMethod));
+  $("inAmount").value = tx ? tx.amount : "";
+  $("inNote").value = tx ? (tx.note || "") : "";
+  $("inDate").value = tx ? tx.date : new Date().toISOString().slice(0, 10);
   buildCatGrid();
   $("overlay").classList.add("show");
-  setTimeout(() => $("inAmount").focus(), 100);
+  if (!tx) setTimeout(() => $("inAmount").focus(), 100);
 }
 function closeSheet() { $("overlay").classList.remove("show"); }
 
-$("addBtn").onclick = openSheet;
+$("addBtn").onclick = () => openSheet();
 $("cancelBtn").onclick = closeSheet;
 $("overlay").onclick = e => { if (e.target === $("overlay")) closeSheet(); };
 
@@ -572,27 +577,38 @@ $("saveBtn").onclick = () => {
   const amount = parseFloat($("inAmount").value);
   if (!amount || amount <= 0) { $("inAmount").focus(); return; }
   if (!selectedCat) { alert("Please pick a category"); return; }
-  data.txs.push({
-    id: Date.now(),
+  const fields = {
     amount: Math.round(amount * 100) / 100,
     cat: selectedCat,
     method: selectedMethod,
     date: $("inDate").value || new Date().toISOString().slice(0, 10),
     note: $("inNote").value.trim()
-  });
+  };
+  if (editingTxId) {
+    const t = data.txs.find(t => t.id === editingTxId);
+    if (t) Object.assign(t, fields);
+  } else {
+    data.txs.push({ id: Date.now(), ...fields });
+  }
   store.save(data);
   closeSheet();
   render();
 };
 
-// ---------- Delete ----------
+// ---------- Tap to edit / delete ----------
 $("txList").onclick = e => {
   const btn = e.target.closest(".tx-del");
-  if (!btn) return;
-  if (!confirm("Delete this expense?")) return;
-  data.txs = data.txs.filter(t => t.id !== Number(btn.dataset.id));
-  store.save(data);
-  render();
+  if (btn) {
+    if (!confirm("Delete this expense?")) return;
+    data.txs = data.txs.filter(t => t.id !== Number(btn.dataset.id));
+    store.save(data);
+    render();
+    return;
+  }
+  const row = e.target.closest(".tx-row");
+  if (!row) return;
+  const t = data.txs.find(t => t.id === Number(row.dataset.id));
+  if (t) openSheet(t);
 };
 
 // ---------- Backup: export / restore ----------
