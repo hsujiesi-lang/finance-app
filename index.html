@@ -53,7 +53,7 @@
     min-height: 100vh;
     padding-bottom: 90px;
   }
-  .app { max-width: 520px; margin: 0 auto; padding: 20px 16px; }
+  .app { max-width: 520px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 24px) 16px 20px; }
 
   /* ---------- Header ---------- */
   header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
@@ -188,9 +188,15 @@
     display: flex; align-items: center; justify-content: center;
   }
   .cat-pick.add-tile { border-style: dashed; color: var(--muted); }
+  .pick-group-label {
+    font-size: 11px; font-weight: 700; color: var(--cat-color);
+    text-transform: uppercase; letter-spacing: .6px; margin: 14px 2px 7px;
+  }
+  .cat-picker > .cat-grid + .pick-group-label { margin-top: 16px; }
+  .cat-picker > .pick-group-label:first-child { margin-top: 4px; }
   .cat-label-row { display: flex; justify-content: space-between; align-items: center; }
   .edit-cats { font-size: 12px; color: var(--accent); cursor: pointer; background: none; border: none; font-weight: 700; text-transform: none; letter-spacing: 0; }
-  .new-cat-form { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .new-cat-form:not([hidden]) { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
   .ncf-row { display: flex; gap: 8px; }
   .ncf-row .nc-emoji { width: 64px; flex: 0 0 64px; text-align: center; }
   .new-cat-form .btn { padding: 12px 0; }
@@ -211,8 +217,8 @@
   }
   .sheet-actions { display: flex; gap: 10px; margin-top: 20px; }
   .btn { flex: 1; padding: 14px 0; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; border: none; }
-  .btn.primary { background: var(--accent); color: #fff; }
-  .btn.ghost { background: var(--bg); color: var(--muted); }
+  .btn.primary { background: var(--green); color: #fff; }
+  .btn.ghost { background: var(--accent-soft); color: var(--accent); }
 
   /* ---------- Backup ---------- */
   .backup-hint { font-size: 12px; color: var(--muted); margin-bottom: 12px; line-height: 1.5; }
@@ -292,7 +298,7 @@
       <button type="button" class="pay-opt" data-m="cash">💵 Cash</button>
     </div>
     <div class="field-label cat-label-row">Category <button type="button" class="edit-cats" id="editCatsBtn">Edit</button></div>
-    <div class="cat-grid" id="catGrid"></div>
+    <div class="cat-picker" id="catGrid"></div>
     <div class="new-cat-form" id="newCatForm" hidden>
       <div class="ncf-row">
         <input class="text-input nc-emoji" id="ncEmoji" type="text" placeholder="🏷️" maxlength="4">
@@ -480,13 +486,33 @@ function buildCatGrid() {
   const cats = visibleCats();
   // when editing an old record whose category was removed, keep it pickable
   if (selectedCat && !cats.some(c => c.id === selectedCat)) cats.push(catById(selectedCat));
-  const tiles = cats.map(c =>
+
+  // group visible categories by their expense type: defaults first (GROUPS order),
+  // then any custom groups in first-seen order
+  const order = GROUPS.map(g => g.name);
+  const byGroup = {};
+  cats.forEach(c => {
+    const g = groupNameOf(c.id);
+    if (!order.includes(g)) order.push(g);
+    (byGroup[g] = byGroup[g] || []).push(c);
+  });
+
+  const tile = c =>
     '<div class="cat-pick' + (editingCats ? ' editing' : '') + (selectedCat === c.id ? ' sel' : '') + '" data-id="' + c.id + '">' +
     '<span class="em">' + c.em + '</span>' + escapeHtml(c.name) +
-    (editingCats ? '<span class="del-badge">✕</span>' : '') + '</div>'
-  );
-  tiles.push('<div class="cat-pick add-tile" data-id="__add"><span class="em">＋</span>New</div>');
-  $("catGrid").innerHTML = tiles.join("");
+    (editingCats ? '<span class="del-badge">✕</span>' : '') + '</div>';
+
+  let html = order.filter(g => byGroup[g] && byGroup[g].length).map(g =>
+    '<div class="pick-group-label">' + escapeHtml(g) + '</div>' +
+    '<div class="cat-grid">' + byGroup[g].map(tile).join("") + '</div>'
+  ).join("");
+
+  // trailing "add new category" tile
+  html += '<div class="cat-grid">' +
+    '<div class="cat-pick add-tile" data-id="__add"><span class="em">＋</span>New</div>' +
+    '</div>';
+
+  $("catGrid").innerHTML = html;
 }
 
 function hideNewCatForm() {
