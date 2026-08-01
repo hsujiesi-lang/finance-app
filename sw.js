@@ -1,4 +1,4 @@
-const CACHE = "my-finance-v3";
+const CACHE = "my-finance-v8";
 const ASSETS = ["./", "index.html", "manifest.json", "icon-192-red.png", "icon-512-red.png", "apple-touch-icon-red.png"];
 
 self.addEventListener("install", e => {
