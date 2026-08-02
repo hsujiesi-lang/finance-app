@@ -190,10 +190,23 @@
   .cat-pick.add-tile { border-style: dashed; color: var(--muted); }
   .pick-group-label {
     font-size: 11px; font-weight: 700; color: var(--cat-color);
-    text-transform: uppercase; letter-spacing: .6px; margin: 14px 2px 7px;
+    text-transform: uppercase; letter-spacing: .6px; margin: 0 2px 7px;
   }
-  .cat-picker > .cat-grid + .pick-group-label { margin-top: 16px; }
-  .cat-picker > .pick-group-label:first-child { margin-top: 4px; }
+  .cat-picker > .pick-group + .pick-group { margin-top: 14px; }
+  .pick-group { border-radius: 14px; transition: outline-color .12s ease; outline: 2px dashed transparent; outline-offset: 3px; }
+  .pick-group.drop-target { outline-color: var(--cat-color); }
+  .cat-pick.editing { touch-action: none; }
+  .cat-pick.dragging { opacity: .35; }
+  .drag-ghost {
+    position: fixed; z-index: 60; margin: 0; pointer-events: none; opacity: .95;
+    box-shadow: 0 10px 26px rgba(0,0,0,.45);
+  }
+  .drop-empty {
+    grid-column: 1 / -1; text-align: center; color: var(--muted); font-size: 12px;
+    padding: 14px 0; border: 1.5px dashed var(--border); border-radius: 12px;
+  }
+  .edit-hint { font-size: 11px; color: var(--muted); margin: 0 2px 12px; line-height: 1.45; }
+  .add-row { margin-top: 14px; }
   .cat-label-row { display: flex; justify-content: space-between; align-items: center; }
   .edit-cats { font-size: 12px; color: var(--accent); cursor: pointer; background: none; border: none; font-weight: 700; text-transform: none; letter-spacing: 0; }
   .new-cat-form:not([hidden]) { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
@@ -332,8 +345,10 @@ const GROUPS = [
   ]},
   { name: "Food & Drinks", cats: [
     { id: "groceries", name: "Groceries",      em: "🛒" },
+    { id: "breakfast", name: "Breakfast",      em: "🍳" },
     { id: "lunch",     name: "Lunch",          em: "🍱" },
     { id: "dinner",    name: "Dinner",         em: "🍜" },
+    { id: "dessert",   name: "Dessert",        em: "🍰" },
     { id: "drinks",    name: "Drinks",         em: "🧋" },
   ]},
   { name: "Lifestyle", cats: [
@@ -353,7 +368,8 @@ const store = {
       budget: typeof d.budget === "number" ? d.budget : 2000,
       txs: Array.isArray(d.txs) ? d.txs : [],
       customCats: Array.isArray(d.customCats) ? d.customCats : [],
-      hiddenCats: Array.isArray(d.hiddenCats) ? d.hiddenCats : []
+      hiddenCats: Array.isArray(d.hiddenCats) ? d.hiddenCats : [],
+      catGroups: (d.catGroups && typeof d.catGroups === "object") ? d.catGroups : {}
     };
   },
   save(d) { localStorage.setItem("finance-data", JSON.stringify(d)); }
@@ -374,6 +390,7 @@ const visibleCats = () => [
 ];
 const catById = id => allCats().find(c => c.id === id) || { id, name: id, em: "💸" };
 const groupNameOf = id => {
+  if (data.catGroups[id]) return data.catGroups[id];   // user-assigned override (drag to move)
   const g = GROUPS.find(g => g.cats.some(c => c.id === id));
   if (g) return g.name;
   const c = data.customCats.find(c => c.id === id);
@@ -423,24 +440,23 @@ function render() {
   txs.forEach(t => byCat[t.cat] = (byCat[t.cat] || 0) + t.amount);
   const maxCat = Math.max(1, ...Object.values(byCat));
 
-  // Display groups: defaults (hidden ones only if they still have spending),
-  // custom categories under their chosen group, unknown ids under "Other".
-  const displayGroups = GROUPS.map(g => ({
-    name: g.name,
-    cats: g.cats.filter(c => !data.hiddenCats.includes(c.id) || byCat[c.id])
-  }));
-  data.customCats.forEach(c => {
-    let g = displayGroups.find(x => x.name === (c.group || "Other"));
-    if (!g) { g = { name: c.group || "Other", cats: [] }; displayGroups.push(g); }
-    g.cats.push(c);
-  });
-  const knownIds = new Set(displayGroups.flatMap(g => g.cats.map(c => c.id)));
-  const leftover = Object.keys(byCat).filter(id => !knownIds.has(id));
-  if (leftover.length) {
-    let other = displayGroups.find(g => g.name === "Other");
-    if (!other) { other = { name: "Other", cats: [] }; displayGroups.push(other); }
-    other.cats.push(...leftover.map(catById));
-  }
+  // Display groups keyed by each category's CURRENT group (respects drag-moves via
+  // groupNameOf). Defaults first in GROUPS order, then custom groups, then "Other".
+  const grpOrder = GROUPS.map(g => g.name);
+  const grpMap = {};
+  const ensureGrp = name => {
+    if (!grpMap[name]) { grpMap[name] = { name, cats: [] }; if (!grpOrder.includes(name)) grpOrder.push(name); }
+    return grpMap[name];
+  };
+  grpOrder.forEach(ensureGrp);
+  const shownCats = [
+    ...GROUPS.flatMap(g => g.cats).filter(c => !data.hiddenCats.includes(c.id) || byCat[c.id]),
+    ...data.customCats
+  ];
+  shownCats.forEach(c => ensureGrp(groupNameOf(c.id)).cats.push(c));
+  const knownIds = new Set(shownCats.map(c => c.id));
+  Object.keys(byCat).filter(id => !knownIds.has(id)).forEach(id => ensureGrp(groupNameOf(id)).cats.push(catById(id)));
+  const displayGroups = grpOrder.map(n => grpMap[n]).filter(Boolean);
 
   let html = "";
   displayGroups.forEach(g => {
@@ -502,13 +518,24 @@ function buildCatGrid() {
     '<span class="em">' + c.em + '</span>' + escapeHtml(c.name) +
     (editingCats ? '<span class="del-badge">✕</span>' : '') + '</div>';
 
-  let html = order.filter(g => byGroup[g] && byGroup[g].length).map(g =>
-    '<div class="pick-group-label">' + escapeHtml(g) + '</div>' +
-    '<div class="cat-grid">' + byGroup[g].map(tile).join("") + '</div>'
-  ).join("");
+  // in edit mode, keep every default group visible (even empty) so categories
+  // can always be dragged back into it
+  const showGroup = g => (byGroup[g] && byGroup[g].length) || editingCats;
+
+  let html = "";
+  if (editingCats) html += '<div class="edit-hint">Drag a category into another group to move it. Tap ✕ to remove.</div>';
+  html += order.filter(showGroup).map(g => {
+    const list = byGroup[g] || [];
+    const inner = list.length ? list.map(tile).join("")
+      : '<div class="drop-empty">Drop here</div>';
+    return '<div class="pick-group" data-group="' + escapeHtml(g) + '">' +
+      '<div class="pick-group-label">' + escapeHtml(g) + '</div>' +
+      '<div class="cat-grid">' + inner + '</div>' +
+      '</div>';
+  }).join("");
 
   // trailing "add new category" tile
-  html += '<div class="cat-grid">' +
+  html += '<div class="cat-grid add-row">' +
     '<div class="cat-pick add-tile" data-id="__add"><span class="em">＋</span>New</div>' +
     '</div>';
 
@@ -562,6 +589,7 @@ $("catGrid").onclick = e => {
     return;
   }
   if (editingCats) {
+    if (!e.target.closest(".del-badge")) return;   // ✕ removes; the tile body is a drag handle
     const c = catById(id);
     if (!confirm('Remove category "' + c.name + '"?\nPast records that use it are kept.')) return;
     if (data.customCats.some(x => x.id === id)) {
@@ -584,6 +612,65 @@ $("editCatsBtn").onclick = () => {
   $("editCatsBtn").textContent = editingCats ? "Done" : "Edit";
   buildCatGrid();
 };
+
+// ---------- Drag a category into another group (edit mode only) ----------
+let catDrag = null;
+const groupAtPoint = (x, y) => { const el = document.elementFromPoint(x, y); return el ? el.closest(".pick-group") : null; };
+
+$("catGrid").addEventListener("pointerdown", e => {
+  if (!editingCats) return;
+  const tile = e.target.closest(".cat-pick");
+  if (!tile || tile.classList.contains("add-tile")) return;
+  if (e.target.closest(".del-badge")) return;   // ✕ handles delete
+  const r = tile.getBoundingClientRect();
+  catDrag = {
+    id: tile.dataset.id, tile, pid: e.pointerId, moved: false, ghost: null,
+    startX: e.clientX, startY: e.clientY, offX: e.clientX - r.left, offY: e.clientY - r.top,
+    w: r.width, h: r.height
+  };
+});
+
+$("catGrid").addEventListener("pointermove", e => {
+  if (!catDrag) return;
+  if (!catDrag.moved) {
+    if (Math.hypot(e.clientX - catDrag.startX, e.clientY - catDrag.startY) < 8) return;
+    catDrag.moved = true;
+    const g = catDrag.tile.cloneNode(true);
+    g.classList.add("drag-ghost");
+    g.classList.remove("dragging", "sel");
+    g.style.width = catDrag.w + "px";
+    g.style.height = catDrag.h + "px";
+    document.body.appendChild(g);
+    catDrag.ghost = g;
+    catDrag.tile.classList.add("dragging");
+    try { catDrag.tile.setPointerCapture(catDrag.pid); } catch (_) {}
+  }
+  e.preventDefault();
+  catDrag.ghost.style.left = (e.clientX - catDrag.offX) + "px";
+  catDrag.ghost.style.top = (e.clientY - catDrag.offY) + "px";
+  const grp = groupAtPoint(e.clientX, e.clientY);
+  document.querySelectorAll(".pick-group").forEach(el => el.classList.toggle("drop-target", el === grp));
+});
+
+function endCatDrag(e) {
+  if (!catDrag) return;
+  const st = catDrag; catDrag = null;
+  if (st.ghost) st.ghost.remove();
+  st.tile.classList.remove("dragging");
+  document.querySelectorAll(".pick-group").forEach(el => el.classList.remove("drop-target"));
+  if (!st.moved) return;   // it was a tap, not a drag
+  const grp = groupAtPoint(e.clientX, e.clientY);
+  if (grp && grp.dataset.group && grp.dataset.group !== groupNameOf(st.id)) {
+    data.catGroups[st.id] = grp.dataset.group;
+    const c = data.customCats.find(c => c.id === st.id);
+    if (c) c.group = grp.dataset.group;   // keep custom cat's own field in sync
+    store.save(data);
+    render();
+  }
+  buildCatGrid();
+}
+$("catGrid").addEventListener("pointerup", endCatDrag);
+$("catGrid").addEventListener("pointercancel", endCatDrag);
 
 $("ncCancel").onclick = hideNewCatForm;
 $("ncAdd").onclick = () => {
